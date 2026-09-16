@@ -20,7 +20,7 @@ export const meta = {
     en: "Yike asynchronous video and image generation",
     zh: "万镜一刻异步视频与图片生成",
   },
-  version: "0.1.1",
+  version: "0.1.2",
   author: { name: "Local" },
   baseUrl: "https://yike.cn-shanghai.aliyuncs.com/",
   allowedHosts: ["yike.cn-shanghai.aliyuncs.com", "yike.ap-southeast-1.aliyuncs.com"],
@@ -195,12 +195,13 @@ function queryURL(baseUrl, fields) {
 }
 
 function yikeHeaders(action, apiKey) {
+  const timestamp = new Date().toISOString().replace(/\.\d+Z$/, "Z");
   return {
     Authorization: trimmed(apiKey),
     Accept: "application/json",
     "x-acs-action": action,
     "x-acs-version": "2026-07-07",
-    "x-acs-date": new Date().toISOString(),
+    "x-acs-date": timestamp,
   };
 }
 
