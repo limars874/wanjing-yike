@@ -491,6 +491,7 @@ export function buildSubmitRequest(ctx) {
     url: queryURL(ctx.baseUrl, built.fields),
     method: "POST",
     headers: yikeHeaders(built.action, ctx.apiKey),
+    body: "",
     action: built.image ? "text_to_image" : "text_to_video",
     rewriteModel: built.model,
   };
@@ -524,6 +525,7 @@ export function buildQueryRequest(ctx) {
     url: queryURL(ctx.baseUrl, { Format: "JSON", JobId: ctx.taskId }),
     method: "POST",
     headers: yikeHeaders(action, ctx.apiKey),
+    body: "",
   };
 }
 
