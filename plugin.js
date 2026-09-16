@@ -22,7 +22,6 @@ export const meta = {
   },
   version: "0.1.0",
   author: { name: "Local" },
-  channelTypes: [61],
   baseUrl: "https://yike.cn-shanghai.aliyuncs.com/",
   allowedHosts: ["yike.cn-shanghai.aliyuncs.com", "yike.ap-southeast-1.aliyuncs.com"],
   auth: "api_key",
