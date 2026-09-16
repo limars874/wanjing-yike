@@ -20,7 +20,7 @@ export const meta = {
     en: "Yike asynchronous video and image generation",
     zh: "万镜一刻异步视频与图片生成",
   },
-  version: "0.1.0",
+  version: "0.1.1",
   author: { name: "Local" },
   baseUrl: "https://yike.cn-shanghai.aliyuncs.com/",
   allowedHosts: ["yike.cn-shanghai.aliyuncs.com", "yike.ap-southeast-1.aliyuncs.com"],
