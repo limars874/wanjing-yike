@@ -77,7 +77,6 @@ export const meta = {
       path: "/wanjing/v1/videos/:task_id",
       type: "query",
       render: "taskStatus",
-      models: VIDEO_MODELS,
     },
     {
       method: "POST",
@@ -93,7 +92,6 @@ export const meta = {
       path: "/wanjing/v1/images/:task_id",
       type: "query",
       render: "taskStatus",
-      models: IMAGE_MODELS,
     },
   ],
   protocols: [
