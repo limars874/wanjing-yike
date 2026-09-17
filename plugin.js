@@ -20,7 +20,7 @@ export const meta = {
     en: "Yike asynchronous video and image generation",
     zh: "万镜一刻异步视频与图片生成",
   },
-  version: "0.1.2",
+  version: "0.1.3",
   author: { name: "Local" },
   baseUrl: "https://yike.cn-shanghai.aliyuncs.com/",
   allowedHosts: ["yike.cn-shanghai.aliyuncs.com", "yike.ap-southeast-1.aliyuncs.com"],
@@ -408,10 +408,15 @@ function mediaURL(output, index) {
   return trimmed(item.OutputUrl || item.outputUrl || item.Url || item.url);
 }
 
-function kindFromContext(ctx) {
-  if (actionIsImage(ctx && ctx.action)) return "image";
-  if (ctx && ctx.data && ctx.data.kind === "image") return "image";
+function kindFromContext(ctx, task) {
+  if (actionIsImage(ctx && ctx.action) || actionIsImage(task && task.action)) return "image";
+  if ((ctx && ctx.data && ctx.data.kind === "image") || (task && task.data && task.data.kind === "image")) return "image";
   if (modelIsImage(ctx && (ctx.upstreamModel || ctx.model))) return "image";
+  if (task && task.properties && modelIsImage(task.properties.upstream_model_name)) return "image";
+  if (task && task.data) {
+    const parsed = parseTaskEnvelope(task.data);
+    if (modelIsImage(parsed.job.Model || parsed.job.model)) return "image";
+  }
   return "video";
 }
 
@@ -450,8 +455,8 @@ function renderCreated(task) {
   };
 }
 
-function renderStatus(task) {
-  const kind = task.action === "text_to_image" || (task.properties && modelIsImage(task.properties.upstream_model_name)) ? "image" : "video";
+function renderStatus(ctx, task) {
+  const kind = kindFromContext(ctx, task);
   const result = normalizedStatus(task.status);
   const output = {
     id: task.task_id,
@@ -478,8 +483,8 @@ export const native = {
   taskCreated: function (_ctx, task) {
     return renderCreated(task);
   },
-  taskStatus: function (_ctx, task) {
-    return renderStatus(task);
+  taskStatus: function (ctx, task) {
+    return renderStatus(ctx, task);
   },
   error: function (_ctx, error) {
     return { error: { code: error.code, message: error.message } };
