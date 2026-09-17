@@ -37,7 +37,7 @@ happyhorse-1.0
 happyhorse-1.1
 ```
 
-当前首版只支持**文生视频**，输出异步任务，通常为 MP4。暂不支持图片输入、图生视频、首尾帧和参考视频。
+当前支持**文生视频**和**图生视频**，输出异步任务，通常为 MP4；暂不支持视频输入、首尾帧、参考视频和 `MediaId`。
 
 ### 2.2 提交任务
 
@@ -74,6 +74,28 @@ curl --request POST "$BASE_URL/v1/videos" \
 | `n` | 否 | 输出数量，默认 1；建议先使用 1。 |
 | `aspect_ratio` | 否 | 如 `16:9`、`9:16`、`1:1`。 |
 | `scene` | 否 | 场景类型，默认 `general`。 |
+
+### 2.2.1 图生视频
+
+在同一接口中增加 `content`，图片必须使用公网 URL：
+
+```bash
+curl --request POST "$BASE_URL/v1/videos" \
+  --header "Authorization: Bearer $NEW_API_KEY" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "model": "happyhorse-1.0",
+    "content": [
+      {"type": "image_url", "image_url": {"url": "https://example.com/input.png"}},
+      {"type": "text", "text": "让画面中的人物自然转身并向远处走去"}
+    ],
+    "seconds": 3,
+    "resolution": "720P",
+    "n": 1
+  }'
+```
+
+`content` 中支持一个 `image_url` 和一个 `text`；Plugin 会自动转换为万镜的 `image_to_video`，用户不需要填写 `JobType` 或 `MediaId`。
 
 提交成功返回本地任务 ID：
 
@@ -127,7 +149,7 @@ Wonder-Image-2
 Wonder-Image-Pro
 ```
 
-当前首版只支持**文生图片**，输出异步任务，通常为 PNG。暂不支持图片输入、图生图和 `ImportMedia`。
+当前支持**文生图片**和**图生图**，输出异步任务，通常为 PNG；不需要填写 `ImportMedia` 或 `MediaId`。
 
 图片接口使用 Plugin 声明的原生路由，不是标准 OpenAI 的 `/v1/images`：
 
@@ -162,6 +184,27 @@ curl --request POST "$BASE_URL/wanjing/v1/images" \
 | `n` | 否 | 输出数量，建议使用 1；供应商文档范围为 1～4。 |
 | `aspect_ratio` | 否 | 如 `16:9`、`9:16`、`1:1`。 |
 | `scene` | 否 | 场景类型，默认 `general`。 |
+
+### 3.2.1 图生图
+
+在同一接口中增加 `content`，图片必须使用公网 URL：
+
+```bash
+curl --request POST "$BASE_URL/wanjing/v1/images" \
+  --header "Authorization: Bearer $NEW_API_KEY" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "model": "qwen-image-3.0",
+    "content": [
+      {"type": "image_url", "image_url": {"url": "https://example.com/input.png"}},
+      {"type": "text", "text": "转换为电影感的黄昏色调，保持原有构图"}
+    ],
+    "resolution": "1K",
+    "n": 1
+  }'
+```
+
+`content` 中支持图片 URL 和文字提示词；Plugin 会自动转换为万镜的 `image_to_image`，用户不需要填写 `JobType` 或 `MediaId`。
 
 提交成功返回本地任务 ID：
 
@@ -215,7 +258,7 @@ curl --location "$BASE_URL$CONTENT_PATH" \
 
 `content_url` 中的 `access` 是短期访问凭证，不要公开或长期保存。
 
-当前 Plugin `0.1.3` 已修复原生图片查询响应类型；完成任务后返回 `object=image` 和 `data[].url`。图片下载仍建议使用 artifact 接口，以获得统一的内容代理和短期访问 URL。
+当前 Plugin `0.2.0` 已支持图生图；完成任务后返回 `object=image` 和 `data[].url`。图片下载仍建议使用 artifact 接口，以获得统一的内容代理和短期访问 URL。
 
 ## 4. 常见错误
 
@@ -224,7 +267,7 @@ curl --location "$BASE_URL$CONTENT_PATH" \
 | `401 Unauthorized` | New API Token 无效、缺少 `Bearer` 或 Token 已禁用。 |
 | `model_price_error` | 后台没有为该模型配置完整价格。 |
 | `prompt is required` | 未填写非空 `prompt`。 |
-| `media input is not enabled` | 当前 Plugin 首版不接受图片、视频或 `ImportMedia` 输入。 |
+| `only public image URLs are supported` | 图片输入必须是万镜可访问的公网 `http(s)` URL；不接受 `MediaId`、本地路径或视频输入。 |
 | `status=failed` | 查看响应中的 `error.message`，通常是模型权限、参数或供应商任务失败。 |
 
 ## 5. 调用流程摘要
