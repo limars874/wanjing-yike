@@ -20,7 +20,7 @@ export const meta = {
     en: "Yike asynchronous video and image generation",
     zh: "万镜一刻异步视频与图片生成",
   },
-  version: "0.1.3",
+  version: "0.2.0",
   author: { name: "Local" },
   baseUrl: "https://yike.cn-shanghai.aliyuncs.com/",
   allowedHosts: ["yike.cn-shanghai.aliyuncs.com", "yike.ap-southeast-1.aliyuncs.com"],
@@ -134,6 +134,73 @@ function actionIsImage(action) {
   return ["text_to_image", "image_to_image"].includes(trimmed(action).toLowerCase());
 }
 
+function isHTTPURL(value) {
+  return /^https?:\/\//i.test(trimmed(value));
+}
+
+function appendImageURL(target, value, label) {
+  if (value === undefined || value === null || value === "") return;
+  let candidate = value;
+  if (isObject(value)) candidate = value.url || value.Url;
+  if (!candidate || !isHTTPURL(candidate)) throw new Error((label || "image URL") + " must be a public http(s) URL");
+  const url = trimmed(candidate);
+  if (!target.includes(url)) target.push(url);
+}
+
+function imageURLsFromContent(content) {
+  if (content === undefined) return [];
+  if (!Array.isArray(content)) throw new Error("content must be an array");
+  const urls = [];
+  for (const item of content) {
+    if (!isObject(item)) continue;
+    if (item.type === "text" || item.type === "input_text") continue;
+    if (item.type === "image_url" || item.type === "input_image") {
+      appendImageURL(urls, item.image_url === undefined ? item.image : item.image_url, "image_url");
+      continue;
+    }
+    throw new Error("only text and image_url content is supported");
+  }
+  return urls;
+}
+
+function imageURLsFromBody(body) {
+  if (!isObject(body)) return [];
+  const urls = imageURLsFromContent(body.content);
+  appendImageURL(urls, body.image_url, "image_url");
+  appendImageURL(urls, body.image, "image");
+  appendImageURL(urls, body.input_reference, "input_reference");
+  if (body.images !== undefined) {
+    if (!Array.isArray(body.images)) throw new Error("images must be an array");
+    for (const image of body.images) appendImageURL(urls, image, "images");
+  }
+  if (isObject(body.input)) {
+    for (const url of imageURLsFromContent(body.input.content)) appendImageURL(urls, url, "input.content");
+    appendImageURL(urls, body.input.image_url, "input.image_url");
+    appendImageURL(urls, body.input.image, "input.image");
+    appendImageURL(urls, body.input.input_reference, "input.input_reference");
+    if (body.input.images !== undefined) {
+      if (!Array.isArray(body.input.images)) throw new Error("input.images must be an array");
+      for (const image of body.input.images) appendImageURL(urls, image, "input.images");
+    }
+  }
+  return urls;
+}
+
+function assertSupportedInput(body) {
+  const unsupportedKeys = ["video", "videos", "video_url", "media", "Media", "Medias", "ImportMedia", "MediaId"];
+  for (const key of unsupportedKeys) {
+    if (body[key] !== undefined && body[key] !== null && body[key] !== "" && !(Array.isArray(body[key]) && body[key].length === 0))
+      throw new Error("only public image URLs are supported; MediaId and video inputs are not supported");
+  }
+  for (const key of ["input", "Input"]) {
+    const value = typeof body[key] === "string" ? parseJSON(body[key]) : body[key];
+    if (!isObject(value)) continue;
+    if (value.MediaId || value.mediaId || value.Media || value.Medias || value.media || value.medias)
+      throw new Error("only public image URLs are supported; MediaId and vendor media fields are not accepted");
+  }
+  return imageURLsFromBody(body);
+}
+
 function modelIsImage(model) {
   return IMAGE_MODELS.includes(trimmed(model));
 }
@@ -232,32 +299,23 @@ function promptFromBody(body) {
   return "";
 }
 
-function assertTextOnly(body) {
-  const mediaKeys = ["image", "images", "input_reference", "inputReference", "video", "videos", "media", "Media", "Medias", "ImportMedia"];
-  for (const key of mediaKeys) {
-    if (body[key] !== undefined && body[key] !== null && body[key] !== "" && !(Array.isArray(body[key]) && body[key].length === 0))
-      throw new Error("media input is not enabled in the first plugin version");
-  }
-  if (Array.isArray(body.content)) {
-    for (const item of body.content) {
-      if (isObject(item) && item.type !== "text" && item.type !== "input_text") throw new Error("media input is not enabled in the first plugin version");
-    }
-  }
-}
-
 function nativeTextTask(ctx, kind) {
   const body = requestObject(ctx);
   const model = trimmed(body.model);
   if (!model) throw new Error("model is required");
-  assertTextOnly(body);
+  const images = assertSupportedInput(body);
+  if (kind === "video" && images.length > 1) throw new Error("image_to_video accepts one image URL");
+  if (kind === "image" && images.length > 9) throw new Error("image_to_image accepts at most nine image URLs");
   const prompt = promptFromBody(body);
   if (!prompt) throw new Error("prompt is required");
-  const action = kind === "image" ? "text_to_image" : "text_to_video";
+  const action = kind === "image"
+    ? (images.length ? "image_to_image" : "text_to_image")
+    : (images.length ? "image_to_video" : "text_to_video");
   return {
     kind: "submit",
     model: model,
     action: action,
-    requestBody: { model: model, prompt: prompt, metadata: body },
+    requestBody: { model: model, prompt: prompt, images: images, metadata: body },
   };
 }
 
@@ -282,7 +340,8 @@ function multipartRequest(ctx) {
 function openaiVideoTask(ctx) {
   const body = multipartRequest(ctx);
   if (!isObject(body)) throw new Error("request body must be an object");
-  assertTextOnly(body);
+  const images = assertSupportedInput(body);
+  if (images.length > 1) throw new Error("image_to_video accepts one image URL");
   const prompt = promptFromBody(body);
   if (!prompt) throw new Error("prompt is required");
   const seconds = body.seconds === undefined ? body.duration : body.seconds;
@@ -291,15 +350,16 @@ function openaiVideoTask(ctx) {
   return {
     kind: "submit",
     model: ctx.model,
-    action: "text_to_video",
-    requestBody: Object.assign({}, body, { model: ctx.model, prompt: prompt, seconds: seconds }),
+    action: images.length ? "image_to_video" : "text_to_video",
+    requestBody: Object.assign({}, body, { model: ctx.model, prompt: prompt, seconds: seconds, images: images }),
   };
 }
 
-function responsesText(value) {
-  if (typeof value === "string") return trimmed(value);
-  if (!Array.isArray(value)) return "";
+function responsesInput(value) {
+  if (typeof value === "string") return { prompt: trimmed(value), images: [] };
+  if (!Array.isArray(value)) return { prompt: "", images: [] };
   const texts = [];
+  const images = [];
   for (const item of value) {
     if (typeof item === "string") {
       if (trimmed(item)) texts.push(trimmed(item));
@@ -308,35 +368,46 @@ function responsesText(value) {
     if (!isObject(item)) continue;
     const parts = Array.isArray(item.content) ? item.content : [item.content === undefined ? item : item.content];
     for (const part of parts) {
-      if (typeof part === "string" && trimmed(part)) texts.push(trimmed(part));
-      else if (isObject(part) && (part.type === "input_text" || part.type === "text") && typeof part.text === "string" && trimmed(part.text))
+      if (typeof part === "string" && trimmed(part)) {
+        texts.push(trimmed(part));
+      } else if (isObject(part) && (part.type === "input_text" || part.type === "text") && typeof part.text === "string" && trimmed(part.text)) {
         texts.push(trimmed(part.text));
-      else if (isObject(part) && ["input_image", "image_url"].includes(part.type)) throw new Error("media input is not enabled in the first plugin version");
+      } else if (isObject(part) && (part.type === "input_image" || part.type === "image_url")) {
+        appendImageURL(images, part.image_url === undefined ? part.image : part.image_url, "input image");
+      } else if (isObject(part) && part.type) {
+        throw new Error("only text and image_url content is supported");
+      }
     }
   }
-  return texts.join("\n");
+  return { prompt: texts.join("\n"), images: images };
+}
+
+function responsesText(value) {
+  return responsesInput(value).prompt;
 }
 
 function responsesTask(ctx) {
   if (!ctx.body || ctx.body.kind !== "json" || !isObject(ctx.body.value)) throw new Error("JSON body required");
   const body = ctx.body.value;
   if (body.metadata !== undefined && !isObject(body.metadata)) throw new Error("metadata must be an object");
-  const prompt = responsesText(body.input) || trimmed(body.prompt);
+  const input = responsesInput(body.input);
+  const prompt = input.prompt || trimmed(body.prompt);
   if (!prompt) throw new Error("input is required");
+  if (input.images.length > 1) throw new Error("image_to_video accepts one image URL");
   const seconds = body.seconds === undefined ? body.duration : body.seconds;
   if (seconds !== undefined && (!Number.isFinite(Number(seconds)) || Number(seconds) <= 0 || Number(seconds) > 3600))
     throw new Error("seconds must be between 1 and 3600");
   return {
     kind: "submit",
     model: ctx.model,
-    action: "text_to_video",
-    requestBody: { model: ctx.model, prompt: prompt, seconds: seconds, metadata: body.metadata || {} },
+    action: input.images.length ? "image_to_video" : "text_to_video",
+    requestBody: { model: ctx.model, prompt: prompt, seconds: seconds, images: input.images, metadata: body.metadata || {} },
   };
 }
 
 function inputObject(request, metadata) {
   const supplied = firstValue(request, metadata, ["Input", "input"]);
-  if (supplied === undefined) return { Prompt: trimmed(request.prompt) };
+  if (supplied === undefined) return {};
   if (typeof supplied === "string") {
     const parsed = parseJSON(supplied);
     if (!isObject(parsed)) throw new Error("Input must be a JSON object string");
@@ -344,6 +415,15 @@ function inputObject(request, metadata) {
   }
   if (!isObject(supplied)) throw new Error("Input must be a JSON object");
   return supplied;
+}
+
+function vendorInput(request, metadata, prompt, images) {
+  const input = Object.assign({}, inputObject(request, metadata));
+  if (!trimmed(input.Prompt) && prompt) input.Prompt = prompt;
+  if (images.length) input.Medias = images.map(function (url) {
+    return { Type: "image", Url: url };
+  });
+  return input;
 }
 
 function jsonString(value, label) {
@@ -358,14 +438,24 @@ function jsonString(value, label) {
 function buildFields(ctx) {
   const request = isObject(ctx.requestBody) ? ctx.requestBody : {};
   const metadata = isObject(request.metadata) ? request.metadata : {};
-  const image = actionIsImage(ctx.action) || modelIsImage(ctx.upstreamModel || ctx.model);
+  const requestImages = imageURLsFromBody(request);
+  const metadataImages = imageURLsFromBody(metadata).filter(function (url) {
+    return !requestImages.includes(url);
+  });
+  const images = requestImages.concat(metadataImages);
+  const outputImage = actionIsImage(ctx.action) || modelIsImage(ctx.upstreamModel || ctx.model);
   const model = trimmed(ctx.upstreamModel || ctx.model || request.model);
-  const prompt = trimmed(request.prompt || promptFromBody(request));
+  const prompt = trimmed(request.prompt || promptFromBody(request) || promptFromBody(metadata));
   if (!model) throw new Error("model is required");
   if (!prompt) throw new Error("prompt is required");
+  if (outputImage && images.length > 9) throw new Error("image_to_image accepts at most nine image URLs");
+  if (!outputImage && images.length > 1) throw new Error("image_to_video accepts one image URL");
 
+  const taskAction = outputImage
+    ? (images.length ? "image_to_image" : "text_to_image")
+    : (images.length ? "image_to_video" : "text_to_video");
   const size = firstValue(request, metadata, ["size", "Size"]);
-  const resolution = image
+  const resolution = outputImage
     ? normalizeImageResolution(firstValue(request, metadata, ["resolution", "Resolution"]) || size)
     : normalizeVideoResolution(firstValue(request, metadata, ["resolution", "Resolution"]) || size);
   const ratio = firstValue(request, metadata, ["aspect_ratio", "aspectRatio", "AspectRatio", "ratio", "Ratio"]) || aspectRatioFromSize(size);
@@ -373,20 +463,20 @@ function buildFields(ctx) {
   const duration = firstValue(request, metadata, ["seconds", "duration", "Duration"]);
   const scene = firstValue(request, metadata, ["scene", "Scene"]);
   const jobParameters = firstValue(request, metadata, ["jobParameters", "JobParameters", "job_parameters"]);
-  const action = image ? "SubmitImageGenerationJob" : "SubmitVideoGenerationJob";
+  const vendorAction = outputImage ? "SubmitImageGenerationJob" : "SubmitVideoGenerationJob";
   const fields = {
     Format: "JSON",
-    JobType: image ? "text_to_image" : "text_to_video",
+    JobType: taskAction,
     Model: model,
-    Input: JSON.stringify(inputObject(request, metadata)),
+    Input: JSON.stringify(vendorInput(request, metadata, prompt, images)),
     Resolution: resolution,
   };
   if (ratio) fields.AspectRatio = ratio;
   if (n !== undefined && n !== null && n !== "") fields.N = String(n);
-  if (!image && duration !== undefined && duration !== null && duration !== "") fields.Duration = String(duration);
+  if (!outputImage && duration !== undefined && duration !== null && duration !== "") fields.Duration = String(duration);
   if (scene !== undefined && scene !== null && scene !== "") fields.Scene = String(scene);
   if (jobParameters !== undefined && jobParameters !== null && jobParameters !== "") fields.JobParameters = jsonString(jobParameters, "JobParameters");
-  return { action: action, fields: fields, model: model, image: image };
+  return { action: vendorAction, taskAction: taskAction, fields: fields, model: model, image: outputImage };
 }
 
 function parseTaskEnvelope(body) {
@@ -498,7 +588,7 @@ export function buildSubmitRequest(ctx) {
     method: "POST",
     headers: yikeHeaders(built.action, ctx.apiKey),
     body: "",
-    action: built.image ? "text_to_image" : "text_to_video",
+    action: built.taskAction,
     rewriteModel: built.model,
   };
 }
@@ -562,7 +652,7 @@ export function parseTaskResult(ctx, body, response) {
 export function listArtifacts(task) {
   if (task.status !== "SUCCESS") return [];
   const parsed = parseTaskEnvelope(task.data);
-  const kind = task.action === "text_to_image" ? "image" : "video";
+  const kind = actionIsImage(task.action) ? "image" : "video";
   const items = mediaList(parsed.output);
   const artifacts = [];
   for (let index = 0; index < items.length; index += 1) {
